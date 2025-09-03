@@ -20,10 +20,10 @@ logger = logging.getLogger("insurance-api-server")
 
 # Database configuration
 DB_CONFIG = {
-    'host': 'demo-pgvector.cluster-cgmz1bkws76b.us-east-1.rds.amazonaws.com',
-    'database': 'moviedb',
+    'host': '<update>',
+    'database': 'policydb',
     'user': 'postgres',
-    'password': 'KYd6SCT8HVrrG6xl',
+    'password': '<update>',
     'port': 5432
 }
 
@@ -234,4 +234,4 @@ async def get_policies_by_type(policy_type: str):
     return results
 
 if __name__ == "__main__":
-    uvicorn.run("mcp_server_4:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("mcp_server:app", host="127.0.0.1", port=8000, reload=True)
