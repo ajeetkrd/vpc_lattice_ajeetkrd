@@ -24,10 +24,25 @@ This project contains the following folders:
 Under the `content` folder, Each folder requires at least one `index.<lang>.md` file. The file will have a header
 
 ```aidl
-+++
-title = "AWS Workshop Template"
-weight = 0
-+++
+sudo yum install git
+cd vpc_lattice_ajeetkrd
+export PGDATABASE=policydb
+psql -c "CREATE DATABASE policydb;" -d postgres -e
+psql -f  policy.sql
+psql -f  policy_user.sql
+psql -f  policy_data.sql
+psql -f  policy_user_data.sql
+python3 -m pip install -r r.txt
+cat > .env << EOF
+DBDRIVER='psycopg2'
+DBUSER='$PGUSER'
+DBPASSWORD='$PGPASSWORD'
+DBHOST='$PGHOST'
+DBPORT=5432
+DBNAME='policydb'
+EOF
+python3 server.py
+streamlit run app.py --server.port 8080
 ```
 
 The title will be the title on navigation panel on the left. The weight determines the order the page appears in the navigation panel.
