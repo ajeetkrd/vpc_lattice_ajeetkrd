@@ -14,3 +14,4 @@ uvicorn
 httpx
 # Streamlit App Dependencies  
 asyncio
+mysql-connector-python
