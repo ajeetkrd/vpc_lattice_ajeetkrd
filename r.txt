@@ -6,7 +6,6 @@ urllib3
 boto3
 awscli
 botocore
-anthropic
 # MCP Server Dependencies
 pydantic
 pandas
