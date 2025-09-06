@@ -1,17 +1,17 @@
-streamlit==1.24.0
+streamlit
 python-dotenv
 psycopg2-binary
 pgvector
-urllib3==1.26.6
-boto3>=1.28.57
-awscli>=1.29.57
-botocore>=1.31.57
+urllib3
+boto3
+awscli
+botocore
 anthropic
 # MCP Server Dependencies
-pydantic>=2.0.0
+pydantic
 pandas
-fastapi>=0.104.0
-uvicorn>=0.24.0
-httpx>=0.25.0
+fastapi
+uvicorn
+httpx
 # Streamlit App Dependencies  
 asyncio
