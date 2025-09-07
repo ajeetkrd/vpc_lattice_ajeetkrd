@@ -1,0 +1,2225 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC Peering setup with NAT Gateways and EC2 instance'
+
+Parameters:
+  OnPremVPCCIDR:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: CIDR block for On-Prem-Sim VPC
+    
+  IngressVPCCIDR:
+    Type: String
+    Default: '172.16.0.0/16'
+    Description: CIDR block for Ingress VPC
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+
+  CloudFrontUrl:
+    Type: String
+    Default: 'https://d3fh841oeihish.cloudfront.net/flaskapp.zip'
+    Description: CloudFront URL for the Flask application
+
+  ECSEC2ServicesVPCCIDR:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: CIDR for ECS/EC2 Services VPC
+
+  LambdaServiceVPCCIDR:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: CIDR for Lambda Service VPC
+
+Resources:
+  # On-Prem-Sim VPC
+  OnPremSimVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref OnPremVPCCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim
+
+  # Ingress VPC
+  IngressVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref IngressVPCCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: Ingress-VPC
+
+  # On-Prem-Sim Public Subnets
+  OnPremSimPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      CidrBlock: !Select [0, !Cidr [!Ref OnPremVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-Public-1
+
+  OnPremSimPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      CidrBlock: !Select [1, !Cidr [!Ref OnPremVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-Public-2
+
+  # On-Prem-Sim Private Subnets
+  OnPremSimPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      CidrBlock: !Select [2, !Cidr [!Ref OnPremVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-Private-1
+
+  OnPremSimPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      CidrBlock: !Select [3, !Cidr [!Ref OnPremVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-Private-2
+
+  # Ingress VPC Subnets (similar structure)
+  IngressPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IngressVPC
+      CidrBlock: !Select [0, !Cidr [!Ref IngressVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Ingress-Public-1
+
+  IngressPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IngressVPC
+      CidrBlock: !Select [1, !Cidr [!Ref IngressVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Ingress-Public-2
+
+  IngressPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IngressVPC
+      CidrBlock: !Select [2, !Cidr [!Ref IngressVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Ingress-Private-1
+
+  IngressPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IngressVPC
+      CidrBlock: !Select [3, !Cidr [!Ref IngressVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Ingress-Private-2
+
+  # Internet Gateways
+  OnPremSimIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-IGW
+
+  OnPremSimIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      InternetGatewayId: !Ref OnPremSimIGW
+
+  IngressIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Ingress-IGW
+
+  IngressIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref IngressVPC
+      InternetGatewayId: !Ref IngressIGW
+
+  # NAT Gateways and EIPs
+  OnPremSimEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  OnPremSimNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt OnPremSimEIP.AllocationId
+      SubnetId: !Ref OnPremSimPublicSubnet1
+
+  IngressEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  IngressNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt IngressEIP.AllocationId
+      SubnetId: !Ref IngressPublicSubnet1
+
+  # VPC Peering
+  VPCPeeringConnection:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      PeerVpcId: !Ref IngressVPC
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-To-Ingress-Peering
+
+  # Routes for OnPremSimVPC to IngressVPC
+  OnPremSimPublicRTPeeringRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OnPremSimPublicRT
+      DestinationCidrBlock: 172.16.0.0/16
+      VpcPeeringConnectionId: !Ref VPCPeeringConnection
+
+  OnPremSimPrivateRTPeeringRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OnPremSimPrivateRT
+      DestinationCidrBlock: 172.16.0.0/16
+      VpcPeeringConnectionId: !Ref VPCPeeringConnection
+
+  # Routes for IngressVPC to OnPremSimVPC
+  IngressPublicRTPeeringRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref IngressPublicRT
+      DestinationCidrBlock: 10.0.0.0/16
+      VpcPeeringConnectionId: !Ref VPCPeeringConnection
+
+  IngressPrivateRTPeeringRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref IngressPrivateRT
+      DestinationCidrBlock: 10.0.0.0/16
+      VpcPeeringConnectionId: !Ref VPCPeeringConnection
+
+  IngressPublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IngressIGWAttachment
+    Properties:
+      RouteTableId: !Ref IngressPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IngressIGW
+
+  IngressPrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref IngressPrivateRT
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref IngressNATGateway
+
+  # Route Table Associations for Ingress VPC
+  IngressPublicRT1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref IngressPublicSubnet1
+      RouteTableId: !Ref IngressPublicRT
+
+  IngressPublicRT2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref IngressPublicSubnet2
+      RouteTableId: !Ref IngressPublicRT
+
+  IngressPrivateRT1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref IngressPrivateSubnet1
+      RouteTableId: !Ref IngressPrivateRT
+
+  IngressPrivateRT2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref IngressPrivateSubnet2
+      RouteTableId: !Ref IngressPrivateRT
+      
+  # Route Tables
+  OnPremSimPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-Public-RT
+
+  OnPremSimPrivateRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-Private-RT
+
+  IngressPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IngressVPC
+      Tags:
+        - Key: Name
+          Value: Ingress-Public-RT
+
+  IngressPrivateRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IngressVPC
+      Tags:
+        - Key: Name
+          Value: Ingress-Private-RT
+
+  # Routes
+  OnPremSimPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: OnPremSimIGWAttachment
+    Properties:
+      RouteTableId: !Ref OnPremSimPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref OnPremSimIGW
+
+  OnPremSimPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OnPremSimPrivateRT
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref OnPremSimNATGateway
+
+  # Route Table Associations
+  OnPremSimPublicRT1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref OnPremSimPublicSubnet1
+      RouteTableId: !Ref OnPremSimPublicRT
+
+  OnPremSimPublicRT2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref OnPremSimPublicSubnet2
+      RouteTableId: !Ref OnPremSimPublicRT
+
+  OnPremSimPrivateRT1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref OnPremSimPrivateSubnet1
+      RouteTableId: !Ref OnPremSimPrivateRT
+
+  OnPremSimPrivateRT2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref OnPremSimPrivateSubnet2
+      RouteTableId: !Ref OnPremSimPrivateRT
+
+  # VPC Endpoints for OnPremSim VPC
+  OnPremSimSSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref OnPremSimPrivateSubnet1
+        - !Ref OnPremSimPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref OnPremEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  OnPremSimSSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref OnPremSimPrivateSubnet1
+        - !Ref OnPremSimPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref OnPremEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  OnPremSimEC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref OnPremSimVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref OnPremSimPrivateSubnet1
+        - !Ref OnPremSimPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref OnPremEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  # VPC Endpoints for Ingress VPC
+  IngressSSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref IngressVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref IngressPrivateSubnet1
+        - !Ref IngressPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref IngressEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  IngressSSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref IngressVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref IngressPrivateSubnet1
+        - !Ref IngressPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref IngressEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  IngressEC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref IngressVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref IngressPrivateSubnet1
+        - !Ref IngressPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref IngressEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  # Security Group for Ingress VPC Endpoints
+  IngressEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: IngressVPC-endpoint-securitygroup
+      GroupDescription: "Security group for VPC Endpoints"
+      VpcId: !Ref IngressVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref IngressVPCCIDR
+
+  IngressVPCSNESecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Ingress VPC SNE
+      VpcId: !Ref IngressVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref IngressVPCCIDR
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref IngressVPCCIDR
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref IngressVPCCIDR
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !Ref IngressVPCCIDR
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+
+# API Gateway Endpoint
+
+  OnPremEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: OnPremSimVPC-endpoint-securitygroup
+      GroupDescription: "Security group allow TCP/443 only"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref OnPremVPCCIDR
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref OnPremVPCCIDR
+      VpcId: !Ref OnPremSimVPC
+
+  OnPremAPIInterfaceEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.execute-api'
+      VpcId: !Ref OnPremSimVPC
+      SubnetIds: 
+        - !Ref OnPremSimPrivateSubnet1
+        - !Ref OnPremSimPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref OnPremEndpointSecurityGroup
+
+  # EC2 Instance Role for SSM
+  LatticeAPIGatewayPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: 'LatticeAPIGatewayPolicy'
+      Description: Managed policy for endpoints to invoke APIs
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'execute-api:Invoke'
+            Resource: '*'
+
+  InvokeLattice:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: InvokeLatticePolicy
+      Description: Managed policy for a instances to invoke vpc-lattice
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'vpc-lattice-svcs:Invoke'
+            Resource: '*'
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+        - !Ref LatticeAPIGatewayPolicy
+        - !Ref InvokeLattice
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # EC2 Instance
+  IngressEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref 'LatestAmiId'
+      SubnetId: !Ref IngressPrivateSubnet1
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref IngressVPCSecurityGroup
+      Tags:
+        - Key: Name
+          Value: Ingress-VPC-Instance1
+
+  IngressEC2Instance2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref 'LatestAmiId'
+      SubnetId: !Ref IngressPrivateSubnet1
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref IngressVPCSecurityGroup
+      Tags:
+        - Key: Name
+          Value: Ingress-VPC-Instance2
+
+  # Security Group for EC2
+  IngressVPCSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Ingress VPC EC2 instance
+      VpcId: !Ref IngressVPC
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref IngressVPCCIDR
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref OnPremVPCCIDR
+
+  OnPremEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref 'LatestAmiId'
+      SubnetId: !Ref OnPremSimPrivateSubnet1
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref OnPremEC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-Instance-2
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          
+          # Update system
+          sudo yum update -y
+          # Download and install MySQL 8.0 repository
+          sudo yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-3.noarch.rpm
+
+          # Install MySQL 8.0 client with GPG check disabled
+          sudo yum install -y --nogpgcheck mysql-community-client
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref 'LatestAmiId'
+      SubnetId: !Ref OnPremSimPrivateSubnet1
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref OnPremEC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: On-Prem-Sim-Instance-1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          
+          # Update system
+          sudo yum update -y
+          # Download and install MySQL 8.0 repository
+          sudo yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-3.noarch.rpm
+
+          # Install MySQL 8.0 client with GPG check disabled
+          sudo yum install -y --nogpgcheck mysql-community-client
+
+          # Install Docker
+          sudo amazon-linux-extras install docker -y
+          sudo systemctl start docker
+          sudo systemctl enable docker
+          sudo usermod -a -G docker ec2-user
+          sudo usermod -a -G docker ssm-user
+                    
+          # Install Python3 and pip
+          sudo yum install python3 python3-pip -y
+                    
+          # Create working directory with proper permissions
+          mkdir -p /home/ec2-user/flask-app
+          chown -R ec2-user:ec2-user /home/ec2-user/flask-app
+          chmod 755 /home/ec2-user/flask-app
+
+  # Security Group for EC2
+  OnPremEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instance
+      VpcId: !Ref OnPremSimVPC
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref OnPremVPCCIDR
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref IngressVPCCIDR
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+
+  # ECR Repository
+  FlaskAppRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: flask-mysql-app
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # Lambda execution role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SSMExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - '*'
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                Resource: '*'
+
+  # SSM Document
+  DockerizeFlaskApp:
+      Type: AWS::SSM::Document
+      Properties:
+        DocumentType: Command
+        Content:
+          schemaVersion: '2.2'
+          description: 'Dockerize Flask application and push to ECR'
+          parameters:
+            WorkingDirectory:
+              type: String
+              description: Working directory for the application
+              default: "/home/ec2-user/flask-app"
+            CloudFrontUrl:
+              type: String
+              description: CloudFront URL for the Flask application
+              default: "https://d3fh841oeihish.cloudfront.net/flaskapp.zip"
+            AWSRegion:
+              type: String
+              description: AWS Region
+            AccountId:
+              type: String
+              description: AWS Account ID
+            RepositoryName:
+              type: String
+              description: ECR Repository Name
+          mainSteps:
+            - action: aws:runShellScript
+              name: DockerizeAndPush
+              inputs:
+                runCommand:
+                  # Install and configure Docker if not present
+                  - |
+                    echo "Setting up Docker..."
+                    if ! command -v docker &> /dev/null; then
+                        echo "Installing Docker..."
+                        sudo yum update -y
+                        sudo yum install -y docker
+                        sudo systemctl start docker
+                        sudo systemctl enable docker
+                        sudo usermod -a -G docker ssm-user
+                        sudo usermod -a -G docker ec2-user
+                        # Wait for Docker to be ready
+                        echo "Waiting for Docker service to be ready..."
+                        sleep 10
+                        sudo systemctl status docker
+                    fi
+                    
+                    # Verify Docker is running
+                    if ! sudo systemctl is-active --quiet docker; then
+                        echo "Starting Docker service..."
+                        sudo systemctl start docker
+                        sleep 10
+                    fi
+                    
+                    # Test Docker
+                    echo "Testing Docker installation..."
+                    sudo docker --version
+                    sudo docker info
+                  
+                  # Setup working directory
+                  - |
+                    echo "Setting up working directory..."
+                    sudo mkdir -p "{{ WorkingDirectory }}"
+                    cd "{{ WorkingDirectory }}"
+                    
+                    echo "Downloading application from CloudFront..."
+                    sudo curl -o app.zip "{{ CloudFrontUrl }}"
+                    sudo unzip app.zip
+                    sudo rm app.zip
+
+                  # Create requirements.txt
+                  - |
+                    echo "Creating requirements.txt..."
+                    sudo cat << 'EOF' > requirements.txt
+                    flask==2.2.2
+                    werkzeug==2.2.2
+                    pymysql==1.1.0
+                    cryptography==41.0.1
+                    gunicorn==20.1.0
+                    EOF
+
+                  # Create Dockerfile
+                  - |
+                    echo "Creating Dockerfile..."
+                    sudo cat << 'EOF' > Dockerfile
+                    FROM python:3.9-slim
+                    
+                    WORKDIR /app
+                    COPY requirements.txt .
+                    RUN pip install --no-cache-dir -r requirements.txt
+                    COPY . .
+                    
+                    ENV MYSQL_HOST=database-host
+                    ENV MYSQL_USER=admin
+                    ENV MYSQL_PASSWORD=password
+                    ENV MYSQL_PORT=3306
+                    ENV FLASK_APP=flaskapp.py
+                    
+                    EXPOSE 80
+                    CMD ["gunicorn", "--bind", "0.0.0.0:80", "flaskapp:app"]
+                    EOF
+
+                  # Build and push to ECR
+                  - |
+                    echo "Logging into ECR..."
+                    sudo aws ecr get-login-password --region "{{ AWSRegion }}" | sudo docker login --username AWS --password-stdin "{{ AccountId }}".dkr.ecr."{{ AWSRegion }}".amazonaws.com
+                    
+                    echo "Building Docker image..."
+                    sudo docker build -t flask-mysql-app .
+                    
+                    echo "Tagging image..."
+                    sudo docker tag flask-mysql-app:latest "{{ AccountId }}".dkr.ecr."{{ AWSRegion }}".amazonaws.com/"{{ RepositoryName }}":latest
+                    
+                    echo "Pushing to ECR..."
+                    sudo docker push "{{ AccountId }}".dkr.ecr."{{ AWSRegion }}".amazonaws.com/"{{ RepositoryName }}":latest
+
+                  # Verify the build
+                  - |
+                    echo "Verifying the build..."
+                    if sudo docker images | grep -q flask-mysql-app; then
+                        echo "Image built successfully"
+                    else
+                        echo "Image build failed"
+                        exit 1
+                    fi
+
+  # Lambda function to execute SSM document
+  SSMExecutionFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        Runtime: python3.9
+        Handler: index.handler
+        Role: !GetAtt LambdaExecutionRole.Arn
+        Timeout: 900  # 15 minutes
+        Code:
+          ZipFile: |
+            import boto3
+            import cfnresponse
+            import time
+
+            def wait_for_instance_ready(ec2_client, instance_id):
+                print(f"Waiting for instance {instance_id} to be ready...")
+                
+                max_attempts = 60  # 10 minutes total (60 * 10 seconds)
+                attempts = 0
+                
+                while attempts < max_attempts:
+                    try:
+                        # Get instance state and status checks
+                        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+                        instance = response['Reservations'][0]['Instances'][0]
+                        state = instance['State']['Name']
+                        
+                        # Get status checks
+                        status_response = ec2_client.describe_instance_status(InstanceIds=[instance_id])
+                        if status_response['InstanceStatuses']:
+                            instance_status = status_response['InstanceStatuses'][0]
+                            system_status = instance_status['SystemStatus']['Status']
+                            instance_status = instance_status['InstanceStatus']['Status']
+                            
+                            print(f"Instance state: {state}, System status: {system_status}, Instance status: {instance_status}")
+                            
+                            # Check if instance is fully ready
+                            if (state == 'running' and 
+                                system_status == 'ok' and 
+                                instance_status == 'ok'):
+                                print("Instance is fully initialized and ready!")
+                                return True
+                        else:
+                            print(f"Instance state: {state}, Status checks not available yet")
+                        
+                        time.sleep(10)
+                        attempts += 1
+                    except Exception as e:
+                        print(f"Error checking instance status: {str(e)}")
+                        time.sleep(10)
+                        attempts += 1
+                
+                raise Exception("Instance did not become ready in time")
+
+            def wait_for_ssm_ready(ssm_client, instance_id):
+                max_attempts = 30
+                attempts = 0
+                while attempts < max_attempts:
+                    try:
+                        print(f"Checking SSM agent status (attempt {attempts + 1}/{max_attempts})...")
+                        response = ssm_client.describe_instance_information(
+                            Filters=[{'Key': 'InstanceIds', 'Values': [instance_id]}]
+                        )
+                        if response['InstanceInformationList']:
+                            print("SSM agent is ready!")
+                            return True
+                        print("SSM agent not ready yet, waiting...")
+                        time.sleep(10)
+                        attempts += 1
+                    except Exception as e:
+                        print(f"Error checking SSM status: {str(e)}")
+                        time.sleep(10)
+                        attempts += 1
+                
+                raise Exception("SSM agent did not become ready in time")
+
+            def handler(event, context):
+                if event['RequestType'] in ['Create', 'Update']:
+                    try:
+                        instance_id = event['ResourceProperties']['InstanceId']
+                        
+                        # Initialize clients
+                        ec2 = boto3.client('ec2')
+                        ssm = boto3.client('ssm')
+                        
+                        # Wait for instance to be fully ready
+                        wait_for_instance_ready(ec2, instance_id)
+                        
+                        # Additional sleep to ensure services are started
+                        print("Instance is ready, waiting additional time for services to start...")
+                        time.sleep(30)
+                        
+                        # Wait for SSM agent
+                        wait_for_ssm_ready(ssm, instance_id)
+                        
+                        print("Sending SSM command...")
+                        response = ssm.send_command(
+                            InstanceIds=[instance_id],
+                            DocumentName=event['ResourceProperties']['DocumentName'],
+                            Parameters={
+                                'WorkingDirectory': ['/home/ec2-user/flask-app'],
+                                'CloudFrontUrl': [event['ResourceProperties']['CloudFrontUrl']],
+                                'AWSRegion': [event['ResourceProperties']['AWSRegion']],
+                                'AccountId': [event['ResourceProperties']['AccountId']],
+                                'RepositoryName': [event['ResourceProperties']['RepositoryName']]
+                            }
+                        )                        
+                        command_id = response['Command']['CommandId']
+                        print(f"Command {command_id} sent. Waiting for completion...")
+                        
+                        # Wait for command completion
+                        max_wait = 180  # 15 minutes
+                        start_time = time.time()
+                        while (time.time() - start_time) < max_wait:
+                            try:
+                                result = ssm.get_command_invocation(
+                                    CommandId=command_id,
+                                    InstanceId=instance_id
+                                )
+                                status = result['Status']
+                                print(f"Command status: {status}")
+                                
+                                if status in ['Success', 'Failed', 'Cancelled', 'TimedOut']:
+                                    if status != 'Success':
+                                        raise Exception(f"SSM command failed: {status} - {result.get('StandardErrorContent', 'No error details')}")
+                                    print("Command completed successfully!")
+                                    break
+                            except ssm.exceptions.InvocationDoesNotExist:
+                                print("Waiting for command invocation...")
+                            time.sleep(10)
+                        else:
+                            raise Exception("Command timed out")
+                        
+                        cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                    except Exception as e:
+                        print(f"Error: {str(e)}")
+                        cfnresponse.send(event, context, cfnresponse.FAILED, {})
+                else:
+                    cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+  # Custom resource to trigger SSM document execution
+  SSMDocumentExecution:
+      Type: Custom::SSMExecution
+      DependsOn: 
+        - EC2Instance
+        - DockerizeFlaskApp
+        - EC2InstanceProfile
+      Properties:
+        ServiceToken: !GetAtt SSMExecutionFunction.Arn
+        InstanceId: !Ref EC2Instance
+        DocumentName: !Ref DockerizeFlaskApp
+        CloudFrontUrl: !Ref CloudFrontUrl
+        AWSRegion: !Ref 'AWS::Region'
+        AccountId: !Ref 'AWS::AccountId'
+        RepositoryName: !Ref FlaskAppRepository
+
+  # Base infra 2 template follows
+
+  superappsvcnetworkLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: 
+        !Join
+          - ''
+          - - 'superappsvcnetworklogs'
+            - !Ref AWS::AccountId
+
+  superappsvcnetworkLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: '/latticeworkshop/parking-svc-logs'
+
+  # VPC 1 - ECS/EC2 Services VPC
+  ECSEC2ServicesVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref ECSEC2ServicesVPCCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: ECSEC2ServicesVPC
+
+  ECSPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      CidrBlock: !Select [0, !Cidr [!Ref ECSEC2ServicesVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: ECS-Private-1
+
+  ECSPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      CidrBlock: !Select [1, !Cidr [!Ref ECSEC2ServicesVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: ECS-Private-2
+  # Internet Gateways and NAT Gateways for ECS/EC2 VPC
+  ECSEC2IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ECSEC2-IGW
+
+  ECSEC2IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      InternetGatewayId: !Ref ECSEC2IGW
+
+  ECSEC2PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      CidrBlock: !Select [2, !Cidr [!Ref ECSEC2ServicesVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: ECSEC2-Public-1
+
+  ECSEC2PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      CidrBlock: !Select [3, !Cidr [!Ref ECSEC2ServicesVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: ECSEC2-Public-2
+
+  ECSEC2EIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  ECSEC2NATGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ECSEC2EIP1.AllocationId
+      SubnetId: !Ref ECSEC2PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: ECSEC2-NAT-1
+
+  # Route Tables for ECS/EC2 VPC
+  ECSEC2PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      Tags:
+        - Key: Name
+          Value: ECSEC2-Public-RT
+
+  ECSEC2PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      Tags:
+        - Key: Name
+          Value: ECSEC2-Private-RT-1
+
+  ECSEC2PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      Tags:
+        - Key: Name
+          Value: ECSEC2-Private-RT-2
+
+  ECSEC2PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: ECSEC2IGWAttachment
+    Properties:
+      RouteTableId: !Ref ECSEC2PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ECSEC2IGW
+
+  ECSEC2PrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ECSEC2PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref ECSEC2NATGateway1
+
+  ECSEC2PrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ECSEC2PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref ECSEC2NATGateway1
+
+  # Route Table Associations for Public Subnets
+  ECSEC2PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ECSEC2PublicSubnet1
+      RouteTableId: !Ref ECSEC2PublicRouteTable
+
+  ECSEC2PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ECSEC2PublicSubnet2
+      RouteTableId: !Ref ECSEC2PublicRouteTable
+
+  # Route Table Associations for Private Subnets
+  ECSPrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ECSPrivateSubnet1
+      RouteTableId: !Ref ECSEC2PrivateRouteTable1
+
+  ECSPrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ECSPrivateSubnet2
+      RouteTableId: !Ref ECSEC2PrivateRouteTable2
+
+  # VPC 2 - Lambda Service VPC
+  LambdaServiceVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref LambdaServiceVPCCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: LambdaServiceVPC
+
+  LambdaPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LambdaServiceVPC
+      CidrBlock: !Select [0, !Cidr [!Ref LambdaServiceVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Lambda-Private-1
+
+  LambdaPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LambdaServiceVPC
+      CidrBlock: !Select [1, !Cidr [!Ref LambdaServiceVPCCIDR, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Lambda-Private-2
+
+  LookupVPCRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EC2Permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                Resource: '*'
+
+  LookupVPCFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !GetAtt LookupVPCRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      ec2 = boto3.client('ec2')
+                      
+                      # Get default VPC
+                      vpcs = ec2.describe_vpcs(
+                          Filters=[{'Name': 'isDefault', 'Values': ['true']}]
+                      )['Vpcs']
+                      
+                      if not vpcs:
+                          raise Exception("No default VPC found")
+                      
+                      vpc_id = vpcs[0]['VpcId']
+                      
+                      # Get subnets in default VPC
+                      subnets = ec2.describe_subnets(
+                          Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+                      )['Subnets']
+                      
+                      subnet_ids = [subnet['SubnetId'] for subnet in subnets]
+                      
+                      response_data = {
+                          'VpcId': vpc_id,
+                          'SubnetIds': subnet_ids
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  else:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+      Timeout: 30
+
+  DefaultVPCLookup:
+    Type: Custom::VPCLookup
+    Properties:
+      ServiceToken: !GetAtt LookupVPCFunction.Arn
+      
+  # VPC Endpoints for ECS/EC2 Services VPC
+  ECSEC2SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref ECSPrivateSubnet1
+        - !Ref ECSPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref ECSEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  ECSEC2SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref ECSPrivateSubnet1
+        - !Ref ECSPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref ECSEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  ECSEC2EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ECSEC2ServicesVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref ECSPrivateSubnet1
+        - !Ref ECSPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref ECSEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  # VPC Endpoints for Lambda Service VPC
+  LambdaSSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref LambdaServiceVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref LambdaPrivateSubnet1
+        - !Ref LambdaPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref LambdaEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  LambdaSSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref LambdaServiceVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref LambdaPrivateSubnet1
+        - !Ref LambdaPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref LambdaEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  LambdaEC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref LambdaServiceVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref LambdaPrivateSubnet1
+        - !Ref LambdaPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref LambdaEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  # Security Groups for VPC Endpoints
+  ECSEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS VPC Endpoints
+      VpcId: !Ref ECSEC2ServicesVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ECSSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+
+  ECSSNESecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS SNE
+      VpcId: !Ref ECSEC2ServicesVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+
+  LambdaEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda VPC Endpoints
+      VpcId: !Ref LambdaServiceVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+  LambdaSNESecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda VPC SNE
+      VpcId: !Ref LambdaServiceVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: WebServices
+
+  # Additional Security Groups
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ALB
+      VpcId: !Ref ECSEC2ServicesVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # Additional IAM Roles and Policies
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # Additional IAM Roles and Policies
+  ECSLatticeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole
+        - arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForVpcLattice
+        - arn:aws:iam::aws:policy/VPCLatticeFullAccess
+
+  # Target Groups
+  ECSTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      TargetType: ip
+      Name: ecs-target-group
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref ECSEC2ServicesVPC
+
+  # Application Load Balancer
+  ECSApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: ecs-web-services-alb
+      Scheme: internal
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+      Subnets:
+        - !Ref ECSEC2PublicSubnet1
+        - !Ref ECSEC2PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  # ALB Listener
+  ECSALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ECSTargetGroup
+      LoadBalancerArn: !Ref ECSApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # ECS Task Role with RDS access
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RDSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds-db:connect
+                Resource: !Sub arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser/${RDSInstance}/*
+
+
+  # ECS Task Definition with Python Flask app
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: flask-app
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: flask-app
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FlaskAppRepository}:latest"
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
+              Name: ecslattice
+          Environment:
+            - Name: PYTHONUNBUFFERED
+              Value: '1'
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          User: root
+
+  # CloudWatch Log Group for ECS
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${AWS::StackName}
+      RetentionInDays: 7
+
+  # ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: ECSALBListener
+    Properties:
+      Cluster: !Ref ECSCluster
+      ServiceName: web-service
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref ECSPrivateSubnet1
+            - !Ref ECSPrivateSubnet2
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+        - ContainerName: flask-app
+          ContainerPort: 80
+          TargetGroupArn: !Ref ECSTargetGroup
+      # VpcLatticeConfigurations:
+      #   - TargetGroupArn: !Ref LatticeTargetGroup
+      #     RoleArn: !GetAtt ECSLatticeRole.Arn
+      #     PortName: ecslattice
+
+
+  # Launch Template for ASG
+  WebServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        IamInstanceProfile:
+          Name: !Ref EC2InstanceProfile
+        InstanceType: t3.micro
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        TagSpecifications:
+          - ResourceType: "instance"
+            Tags:
+            - Key: "Name"
+              Value: "Rates"
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y httpd
+            systemctl start httpd
+            systemctl enable httpd
+
+            # Create the configuration file
+            cat <<EOF > /etc/httpd/conf.d/custom.conf
+            <Directory "/var/www/html">
+                DirectorySlash Off
+                Options FollowSymLinks
+                AllowOverride None
+                Require all granted
+                
+                # Enable rewrite engine
+                RewriteEngine On
+                
+                # Specific rule for /rates without trailing slash
+                RewriteRule ^rates$ rates/index.html [L]
+                
+                # Add more specific rules for other subdirectories if needed
+                # RewriteRule ^payments$ payments/index.html [L]
+            </Directory>
+            EOF
+
+            # Create directory structure and files
+            mkdir -p /var/www/html/rates
+
+            # Create main index file
+            cat <<EOF > /var/www/html/index.html
+            <html>
+                <body>
+                    <h1>Parking service is working on instance in an Autoscaling Group (ASG)(Service Default Rule).</h1>
+                </body>
+            </html>
+            EOF
+
+            # Create rates index file
+            cat <<EOF > /var/www/html/rates/index.html
+            <html>
+                <body>
+                    <h1>Rates Information</h1>
+                    <p>Hello from Rates sub-system of Parking Service. Its working on instance in an Autoscaling Group (ASG).</p>
+                </body>
+            </html>
+            EOF
+
+            # Enable mod_rewrite
+            sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/httpd/conf.modules.d/00-base.conf
+
+            # Set proper permissions
+            chown -R apache:apache /var/www/html
+            chmod -R 755 /var/www/html
+
+            # Restart Apache to apply changes
+            systemctl restart httpd
+  # Auto Scaling Group
+  WebServerASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref ECSPrivateSubnet1
+        - !Ref ECSPrivateSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebServerLaunchTemplate
+        Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '1'
+      DesiredCapacity: '1'
+
+  StandaloneEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      InstanceType: t3.micro
+      SubnetId: !Ref ECSPrivateSubnet1
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: Payments
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+
+          # Create the configuration file
+          cat <<EOF > /etc/httpd/conf.d/custom.conf
+          <Directory "/var/www/html">
+              DirectorySlash Off
+              Options FollowSymLinks
+              AllowOverride None
+              Require all granted
+              
+              # Enable rewrite engine
+              RewriteEngine On
+              
+              # Specific rule for /rates without trailing slash
+              # RewriteRule ^rates$ rates/index.html [L]
+              
+              # Add more specific rules for other subdirectories if needed
+              RewriteRule ^payments$ payments/index.html [L]
+          </Directory>
+          EOF
+
+          # Create directory structure and files
+          mkdir -p /var/www/html/payments
+
+          # Create main index file
+          cat <<EOF > /var/www/html/index.html
+          <html>
+              <body>
+                  <h1>Payment-subsection of Parking service is working on an EC2 instance behind ALB.</h1>
+              </body>
+          </html>
+          EOF
+
+          # Create rates index file
+          cat <<EOF > /var/www/html/payments/index.html
+          <html>
+              <body>
+                  <h1>Payments Information</h1>
+                  <p>Hello from Payments sub-system of Parking Service. Its working on an EC2 instance behind ALB.</p>
+              </body>
+          </html>
+          EOF
+
+          # Enable mod_rewrite
+          sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/httpd/conf.modules.d/00-base.conf
+
+          # Set proper permissions
+          chown -R apache:apache /var/www/html
+          chmod -R 755 /var/www/html
+
+          # Restart Apache to apply changes
+          systemctl restart httpd
+
+  EC2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Name: ec2-target-group
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref ECSEC2ServicesVPC
+      Targets: 
+        - Id: !Ref StandaloneEC2
+          Port: '80'
+
+      TargetType: instance
+
+
+  EC2ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: ec2-web-services-alb
+      Scheme: internal
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+      Subnets:
+        - !Ref ECSEC2PublicSubnet1
+        - !Ref ECSEC2PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  # ALB Listener
+  EC2ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref EC2TargetGroup
+      LoadBalancerArn: !Ref EC2ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # Lambda Function with RDS access
+  ConsumerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import os
+          import pymysql
+          import sys
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              # Database configuration
+              db_config = {
+                  'host': os.environ['DB_HOST'],
+                  'user': os.environ['DB_USER'],
+                  'password': os.environ['DB_PASSWORD'],
+                  'database': 'Counters',
+                  'connect_timeout': 5
+              }
+              
+              try:
+                  # Create connection
+                  conn = pymysql.connect(**db_config)
+                  cursor = conn.cursor()
+                  
+                  logger.info("Creating database if not exists")
+                  cursor.execute('CREATE DATABASE IF NOT EXISTS Counters')
+                  cursor.execute('USE Counters')
+        
+                  logger.info("Creating table if not exists")
+                  cursor.execute('''
+                      CREATE TABLE IF NOT EXISTS Counters (
+                          ID INT PRIMARY KEY AUTO_INCREMENT,
+                          Count INT DEFAULT 0,
+                          RequestType VARCHAR(4)
+                      )
+                  ''')
+
+                  # Query the database
+                  cursor.execute('SELECT Count FROM Counters LIMIT 1')
+                  result = cursor.fetchone()
+                  
+                  # Close the connection
+                  cursor.close()
+                  conn.close()
+                  
+                  count = result[0] if result else 'No count found'
+                  
+                  # Create HTML response
+                  html = f"""
+                      <html>
+                          <body>
+                              <h1>Service consumer on Lambda is wowrking. It also called another service in the Service Network running on RDS and fetched the below data.</h1>
+                              <p>Current Count: {count}</p>
+                          </body>
+                      </html>
+                  """
+                  
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Content-Type': 'text/html'
+                      },
+                      'body': html
+                  }
+                  
+              except Exception as e:
+                  print(f"Database error: {str(e)}", file=sys.stderr)
+                  error_html = f"""
+                      <html>
+                          <body>
+                              <h1>Error</h1>
+                              <p>Database error: {str(e)}</p>
+                          </body>
+                      </html>
+                  """
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Content-Type': 'text/html'
+                      },
+                      'body': error_html
+                  }
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          DB_HOST: 'db.lambda.local'
+          DB_USER: 'admin'
+          DB_PASSWORD: 'Amzn1234!'
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref LambdaPrivateSubnet1
+          - !Ref LambdaPrivateSubnet2
+      Layers:
+        - !Ref PyMySQLLayer
+
+  LayerBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Join 
+        - '-'
+        - - 'lambda-layers'
+          - !Ref 'AWS::AccountId'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: LambdaLayersBucket
+
+  # IAM Role for Layer Creation Lambda
+  LayerCreationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub ${LayerBucket.Arn}/*
+
+  # Lambda function to create and upload layer
+  LayerCreationFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LayerBucket
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LayerCreationRole.Arn
+      Code:
+        ZipFile: |
+          import cfnresponse
+          import boto3
+          import os
+          import subprocess
+          import shutil
+          import zipfile
+          
+          def create_layer():
+              # Create directory structure
+              os.makedirs('/tmp/python/lib/python3.11/site-packages', exist_ok=True)
+              
+              # Install required packages
+              packages = [
+                  'pymysql[rsa]',
+                  'cryptography'
+              ]
+                      
+              for package in packages:
+                  subprocess.check_call([
+                      'pip',
+                      'install',
+                      package,
+                      '-t',
+                      '/tmp/python/lib/python3.11/site-packages'
+                  ])
+
+              # Create ZIP file
+              shutil.make_archive('/tmp/layer', 'zip', '/tmp')
+              return '/tmp/layer.zip'
+          
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      # Create layer ZIP file
+                      zip_file = create_layer()
+                      
+                      # Upload to S3
+                      s3 = boto3.client('s3')
+                      bucket = event['ResourceProperties']['DestBucket']
+                      key = event['ResourceProperties']['DestKey']
+                      
+                      s3.upload_file(zip_file, bucket, key)
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'Message': 'Layer created successfully'
+                      })
+                  else:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'Message': 'Nothing to do for Delete'
+                      })
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Error': str(e)
+                  })
+      Runtime: python3.11
+      Timeout: 300
+      MemorySize: 512
+
+  # Custom Resource to create and upload Layer
+  CreatePyMySQLLayer:
+    Type: Custom::LayerCreation
+    DependsOn: LayerBucket
+    Properties:
+      ServiceToken: !GetAtt LayerCreationFunction.Arn
+      DestBucket: !Ref LayerBucket
+      DestKey: pymysql-layer.zip
+
+  # Lambda Layer for PyMySQL - using inline commands to create ZIP
+  PyMySQLLayer:
+    Type: AWS::Lambda::LayerVersion
+    DependsOn: CreatePyMySQLLayer
+    Properties:
+      CompatibleRuntimes:
+        - python3.11
+      Content:
+        S3Bucket: !Ref LayerBucket
+        S3Key: pymysql-layer.zip
+      Description: PyMySQL Layer for Lambda function
+
+  # Lambda Execution Role
+#  LambdaExecutionRole:
+#    Type: AWS::IAM::Role
+#    Properties:
+#      AssumeRolePolicyDocument:
+#        Version: '2012-10-17'
+#        Statement:
+#          - Effect: Allow
+#            Principal:
+#              Service: lambda.amazonaws.com
+#            Action: sts:AssumeRole
+#      ManagedPolicyArns:
+#        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+  # RDS Instance
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: mysql
+      EngineVersion: 8.4.3
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+      DBName: Counters
+      MasterUsername: admin
+      MasterUserPassword: 'Amzn1234!'
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 0
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds: !GetAtt DefaultVPCLookup.SubnetIds
+        # - !Ref RDSPrivateSubnet1
+        # - !Ref RDSPrivateSubnet2
+
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "admin"}'
+        GenerateStringKey: password
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
+  # Private Hosted Zones
+  LambdaPrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: lambda.local
+      VPCs:
+         - VPCId: !Ref LambdaServiceVPC
+           VPCRegion: !Ref AWS::Region
+      HostedZoneConfig:
+        Comment: Private hosted zone for SNE access
+
+  IngressPrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: ingress.local
+      VPCs:
+         - VPCId: !Ref OnPremSimVPC
+           VPCRegion: !Ref AWS::Region
+         - VPCId: !Ref IngressVPC
+           VPCRegion: !Ref AWS::Region
+      HostedZoneConfig:
+        Comment: Private hosted zone for SNE access
+
+  ECSEC2PrivateHostedZone:
+    DependsOn: RDSInstance
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: ec2ecs.local
+      VPCs:
+        - VPCId: !Ref ECSEC2ServicesVPC
+          VPCRegion: !Ref AWS::Region
+      HostedZoneConfig:
+        Comment: Private hosted zone for SNE access
+
+  # CNAME Record for RDS
+  RDSCNAMERecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref ECSEC2PrivateHostedZone
+      Name: db.ec2ecs.local
+      Type: CNAME
+      TTL: '300'
+      ResourceRecords:
+        - !GetAtt RDSInstance.Endpoint.Address
+
+  # Security Groups
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref ECSEC2ServicesVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instances
+      VpcId: !Ref ECSEC2ServicesVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda function
+      VpcId: !Ref LambdaServiceVPC
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS
+      VpcId: !GetAtt DefaultVPCLookup.VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: '0.0.0.0/0'
+
+
+Outputs:
+  OnPremSimVPCId:
+    Description: VPC ID of On-Prem-Sim
+    Value: !Ref OnPremSimVPC
+    Export:
+      Name: OnPremSimVPC
+
+
+  IngressVPCId:
+    Description: VPC ID of Ingress VPC
+    Value: !Ref IngressVPC
+    Export:
+      Name: IngressVPC
+
+  EC2InstanceId:
+    Description: ID of the EC2 instance
+    Value: !Ref EC2Instance
+    Export:
+      Name: OnPremEC2
+  
+#  FlaskAppImageUri:
+#    Description: "URI of the Flask application Docker image in ECR"
+#    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FlaskAppRepository}:latest"
+#    Export:
+#      Name: FlaskAppImageUri
+
+  ECRRepositoryArn:
+    Description: "ARN of the ECR Repository"
+    Value: !GetAtt FlaskAppRepository.Arn
+    Export:
+      Name: ECRRepositoryArn
+
+  ECRRepositoryName:
+    Description: "Name of the ECR Repository"
+    Value: !Ref FlaskAppRepository
+    Export:
+      Name: ECRRepositoryName
+
+
+
